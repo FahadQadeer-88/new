@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Diesel Monitoring Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --primary: #3b82f6;
+      --secondary: #ff8c00;
+      --bg-light: #f5f7fa;
+      --card-bg: #fff;
+      --text-dark: #111827;
+      --text-muted: #6b7280;
+      --shadow: 0 2px 12px rgba(0,0,0,0.08);
+      --border-radius: 12px;
+      --ok: #0a7d2a;
+      --warn: #eab308;
+      --crit: #b00020;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: 'Poppins', sans-serif; background: var(--bg-light); margin: 0; color: var(--text-dark); }
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 30px; max-width: 100%; }
+    .bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 0 30px 30px 30px; }
+    .card { background: var(--card-bg); border-radius: var(--border-radius); padding: 16px; box-shadow: var(--shadow); min-height: 350px; }
+    .card h2 { font-size: 1.2rem; margin-bottom: 16px; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; }
+
+    .tank-wrapper { display: flex; flex-direction: column; align-items: center; margin-top: 20px; gap: 14px; }
+
+    /* Spaced buttons and aligned tank */
+    .tank-row { display: flex; align-items: flex-start; gap: 32px; } /* wider gap */
+    .control-stack { display: flex; flex-direction: column; gap: 8px; }
+    .tank-col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+    .side-btn {
+      background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px;
+      padding: 8px 12px; box-shadow: var(--shadow); cursor: pointer;
+      font-weight: 600; color: var(--text-dark); text-align: left; min-width: 160px;
+    }
+    .side-btn:hover { background: #eef2ff; border-color: #dbeafe; }
+    .side-btn:active { transform: translateY(1px); }
+    .flash { box-shadow: 0 0 0 3px rgba(59,130,246,0.35) !important; transition: box-shadow 0.2s; }
+
+    .tank { width: 200px; height: 280px; border: 4px solid var(--primary); border-radius: 14px; overflow: hidden; background-color: #e0ecf9; position: relative; }
+    .fluid { position: absolute; bottom: 0; width: 100%; background: linear-gradient(to top, #ffcc00, var(--secondary)); transition: height 1s ease-in-out; }
+    .level { font-weight: 600; font-size: 1rem; color: var(--primary); }
+    .capacity { font-size: 0.85rem; color: var(--text-muted); }
+
+    .transaction-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .transaction-subgroup { border-right: 1px solid #e5e7eb; padding-right: 15px; }
+    .transaction-subgroup:last-child { border-right: none; padding-left: 15px; }
+    .transaction-subgroup h3 { color: var(--primary); font-size: 1.05rem; margin-bottom: 10px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+    .transaction { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; }
+    .transaction span { font-weight: 500; }
+    .inlet { color: green; }
+    .outlet { color: red; }
+
+    .chart-wrapper { height: 220px; }
+    #currentDateTime { font-size: 0.9rem; font-weight: bold; margin: 10px 30px; color: var(--text-dark); text-align: center; }
+
+    /* Manual entry form */
+    .form-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .form-row input[type="number"] { padding: 8px; min-width: 140px; }
+    .form-row button { padding: 8px 14px; cursor: pointer; }
+    .hint { color: var(--text-muted); font-size: 0.9rem; }
+    .ok { color: var(--ok); }
+    .err { color: var(--crit); }
+
+    /* Forecast card */
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .stat { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; box-shadow: var(--shadow); }
+    .stat .label { font-size: 0.8rem; color: var(--text-muted); }
+    .stat .value { font-weight: 700; margin-top: 6px; }
+    .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+    .pill.ok { background: #e8f5ec; color: var(--ok); border: 1px solid #c8ecd4; }
+    .pill.warn { background: #fff8db; color: #8a6d00; border: 1px solid #f2e3a3; }
+    .pill.crit { background: #fdeaea; color: var(--crit); border: 1px solid #f6c3c3; }
+
+    /* Modal */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; z-index: 50; }
+    .modal-backdrop[aria-hidden="false"] { display: block; }
+    .modal { position: fixed; z-index: 51; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(700px, 92vw); max-height: 85vh; overflow: auto; background: #fff; border-radius: 12px; box-shadow: var(--shadow); display: none; }
+    .modal[aria-hidden="false"] { display: block; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid #e5e7eb; }
+    .modal-title { font-weight: 700; }
+    .modal-body { padding: 14px 16px; }
+    .modal-footer { padding: 12px 16px; border-top: 1px solid #e5e7eb; display: flex; justify-content: flex-end; gap: 10px; }
+    .btn { background: var(--primary); color: #fff; border: none; border-radius: 8px; padding: 8px 12px; cursor: pointer; font-weight: 600; }
+    .btn.secondary { background: #eef2ff; color: #1f2937; }
+    .btn.danger { background: #ef4444; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .table { width: 100%; border-collapse: collapse; }
+    .table th, .table td { padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 0.9rem; }
+    .toolbar { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+
+    /* Mobile: stack buttons above tank */
+    @media (max-width: 640px) {
+      .tank-row { flex-direction: column; gap: 16px; }
+      .control-stack { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+      .side-btn { min-width: 140px; }
+      .bottom-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <header style="width: 100%; text-align: center; box-shadow: var(--shadow);">
+    <img src="banner.png" alt="Diesel Monitoring System Banner" style="width: 100%; height: auto; display: block;">
+  </header>
+
+  <div id="currentDateTime">Loading PKT time...</div>
+
+  <!-- Manual Entry card at top -->
+  <div class="bottom-row" style="grid-template-columns: 1fr; padding-top:20px;">
+    <div class="card" style="min-height:auto;">
+      <h2>Manual Entry (Dip in mm)</h2>
+      <!-- PREVENT REFRESH -->
+      <form id="potForm" action="javascript:void(0)" autocomplete="off">
+        <div class="form-row">
+          <label for="potInput"><strong>Dip Value</strong> (0–1670 mm):</label>
+          <input id="potInput" type="number" min="0" max="1670" step="1" required />
+          <button id="saveBtn" type="submit">Save to Firebase</button>
+        </div>
+        <div class="hint">Uses horizontal-cylinder geometry to convert dip (mm) → liters; writes to <code>potvalue/YYYY-MM-DD/HH:MM:SS</code>.</div>
+        <div id="potMsg" class="hint" aria-live="polite" style="margin-top:6px;"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="dashboard">
+    <!-- Tank Card -->
+    <div class="card">
+      <h2>Diesel Tank Status</h2>
+      <div class="tank-wrapper">
+        <div class="tank-row">
+          <!-- Left-side vertical buttons -->
+          <div class="control-stack" aria-label="Tank quick actions">
+            <button class="side-btn" id="btn-incoming" type="button">Fuel incoming</button>
+            <button class="side-btn" id="btn-outgoing" type="button">Fuel outgoing</button>
+            <button class="side-btn" id="btn-email" type="button">Email alerts</button>
+            <button class="side-btn" id="btn-datetime" type="button">Date &amp; time</button>
+            <button class="side-btn" id="btn-trend" type="button">Trend analysis</button>
+          </div>
+
+          <!-- Tank + labels grouped -->
+          <div class="tank-col">
+            <div class="tank">
+              <div class="fluid" id="tank-fluid" style="height: 0%;"></div>
+            </div>
+            <div class="level">Current Level: <span id="current-level">0</span> L</div>
+            <div class="capacity">Max Capacity: <span id="max-capacity-label">—</span> L</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Transaction Log Card -->
+    <div class="card">
+      <h2>Transaction History</h2>
+      <div class="transaction-group">
+        <div class="transaction-subgroup">
+          <h3>Inlet Transactions</h3>
+          <div id="inlet-log-list"></div>
+        </div>
+        <div class="transaction-subgroup">
+          <h3>Outlet Transactions</h3>
+          <div id="outlet-log-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Row -->
+  <div class="bottom-row">
+    <div class="card" id="forecast-card">
+      <h2>Forecast &amp; Alerts</h2>
+      <div class="stats">
+        <div class="stat">
+          <div class="label">Avg Consumption (last 12h)</div>
+          <div class="value"><span id="avg-rate">—</span> L/h</div>
+        </div>
+        <div class="stat">
+          <div class="label">Threshold</div>
+          <div class="value"><span id="threshold-liters">—</span> L (<span id="threshold-pct">15</span>%)</div>
+        </div>
+        <div class="stat">
+          <div class="label">ETA to Threshold</div>
+          <div class="value"><span id="eta">—</span></div>
+        </div>
+        <div class="stat">
+          <div class="label">Status</div>
+          <div class="value"><span id="status-pill" class="pill ok">OK</span></div>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:10px;">Forecast uses linear regression over the last 12 hours of readings (PKT).</div>
+    </div>
+
+    <div class="card">
+      <h2>Diesel Level History</h2>
+      <div class="chart-wrapper">
+        <canvas id="diesel-level-chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODALS -->
+  <div class="modal-backdrop" id="modal-backdrop" aria-hidden="true"></div>
+
+  <section class="modal" id="modal-incoming" aria-hidden="true" aria-labelledby="modal-incoming-title" role="dialog">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-incoming-title">Fuel Incoming — History</div>
+      <button class="btn secondary" data-close="#modal-incoming">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="toolbar">
+        <input id="incoming-search" type="search" placeholder="Search timestamp…" style="padding:8px; flex:1;">
+        <button id="incoming-export" class="btn">Export CSV</button>
+      </div>
+      <table class="table">
+        <thead><tr><th>Amount (L)</th><th>Timestamp (PKT)</th></tr></thead>
+        <tbody id="incoming-tbody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" data-close="#modal-incoming">Close</button>
+    </div>
+  </section>
+
+  <section class="modal" id="modal-outgoing" aria-hidden="true" aria-labelledby="modal-outgoing-title" role="dialog">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-outgoing-title">Fuel Outgoing — History</div>
+      <button class="btn secondary" data-close="#modal-outgoing">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="toolbar">
+        <input id="outgoing-search" type="search" placeholder="Search timestamp…" style="padding:8px; flex:1;">
+        <button id="outgoing-export" class="btn">Export CSV</button>
+      </div>
+      <table class="table">
+        <thead><tr><th>Amount (L)</th><th>Timestamp (PKT)</th></tr></thead>
+        <tbody id="outgoing-tbody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" data-close="#modal-outgoing">Close</button>
+    </div>
+  </section>
+
+  <section class="modal" id="modal-alerts" aria-hidden="true" aria-labelledby="modal-alerts-title" role="dialog">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-alerts-title">Email Alerts — Settings</div>
+      <button class="btn secondary" data-close="#modal-alerts">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="toolbar" style="gap:16px; align-items:flex-end;">
+        <div style="flex:1;">
+          <label for="alert-email" style="display:block; font-weight:600; margin-bottom:6px;">Email</label>
+          <input id="alert-email" type="email" placeholder="your@email.com" style="padding:8px; width:100%;">
+        </div>
+        <div>
+          <label for="alert-threshold" style="display:block; font-weight:600; margin-bottom:6px;">Threshold (%)</label>
+          <input id="alert-threshold" type="number" min="1" max="99" step="1" value="15" style="padding:8px; width:120px;">
+        </div>
+        <button id="alert-save" class="btn">Save</button>
+      </div>
+      <div class="hint" id="alert-msg">Saved settings are stored in Firestore at <code>settings/alerts</code>.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" data-close="#modal-alerts">Close</button>
+    </div>
+  </section>
+
+  <section class="modal" id="modal-trend" aria-hidden="true" aria-labelledby="modal-trend-title" role="dialog">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-trend-title">Trend Analysis — View Options</div>
+      <button class="btn secondary" data-close="#modal-trend">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="toolbar" role="radiogroup" aria-label="Chart range">
+        <label><input type="radio" name="range" value="last5" checked> Last 5</label>
+        <label><input type="radio" name="range" value="24h" style="margin-left:12px;"> Last 24h</label>
+        <label><input type="radio" name="range" value="7d" style="margin-left:12px;"> Last 7d</label>
+        <label><input type="radio" name="range" value="all" style="margin-left:12px;"> All</label>
+      </div>
+      <div class="hint">Changing the range updates only the chart. (The side logs still show “strict last 5 real events”.)</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" data-close="#modal-trend">Close</button>
+    </div>
+  </section>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, onSnapshot, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // === Firebase ===
+    const firebaseConfig = {
+      apiKey: "AIzaSyBT2vVPlIfS8qGbQiJXxL_ALMzDH4kWZsg",
+      authDomain: "asc-diesel.firebaseapp.com",
+      projectId: "asc-diesel",
+      storageBucket: "asc-diesel.firebasestorage.app",
+      messagingSenderId: "1429392819",
+      appId: "1:1429392819:web:5ab00c960723e55682cfc6"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    // === Time display ===
+    function getPakistanDateTime(dateObj) {
+      const optionsDate = { timeZone: "Asia/Karachi", year: "numeric", month: "2-digit", day: "2-digit" };
+      const optionsTime = { timeZone: "Asia/Karachi", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false };
+      const date = dateObj.toLocaleDateString("en-CA", optionsDate);
+      const time = dateObj.toLocaleTimeString("en-GB", optionsTime);
+      return { date, time };
+    }
+    function updateCurrentDateTime() {
+      const nowPK = getPakistanDateTime(new Date());
+      document.getElementById("currentDateTime").textContent = `Current PKT: ${nowPK.date} ${nowPK.time}`;
+    }
+    setInterval(updateCurrentDateTime, 1000);
+    updateCurrentDateTime();
+
+    // === Tank geometry ===
+    const R_mm = 835, L_mm = 2470;
+    const maxCapacity = Math.round(Math.PI * R_mm * R_mm * L_mm / 1_000_000);
+    document.getElementById('max-capacity-label').textContent = String(maxCapacity);
+
+    function dipToLiters(dipMm) {
+      const h = Math.max(0, Math.min(2 * R_mm, dipMm));
+      const area =
+        (R_mm * R_mm) * Math.acos((R_mm - h) / R_mm) -
+        (R_mm - h) * Math.sqrt(Math.max(0, 2 * R_mm * h - h * h));
+      return (area * L_mm) / 1_000_000;
+    }
+
+    // === UI handles ===
+    const currentLevelSpan = document.getElementById('current-level');
+    const fluidDiv         = document.getElementById('tank-fluid');
+    const inletLogList     = document.getElementById('inlet-log-list');
+    const outletLogList    = document.getElementById('outlet-log-list');
+
+    // Forecast handles
+    const avgRateEl      = document.getElementById('avg-rate');
+    const thresholdEl    = document.getElementById('threshold-liters');
+    const thresholdPctEl = document.getElementById('threshold-pct');
+    const etaEl          = document.getElementById('eta');
+    const statusPill     = document.getElementById('status-pill');
+
+    // Chart
+    const chartCtx = document.getElementById('diesel-level-chart').getContext('2d');
+    const dieselChart = new Chart(chartCtx, {
+      type: 'line',
+      data: { labels: [], datasets: [{
+        label: 'Diesel Level (L)',
+        data: [],
+        fill: true,
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        tension: 0.3,
+        pointRadius: 3
+      }]},
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          y: { beginAtZero: true, max: maxCapacity, title: { display: true, text: 'Level (L)' } },
+          x: { title: { display: true, text: 'Time' } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    // Helpers
+    function parsePKTToDate(key) { const [d, t] = key.split(' '); return new Date(`${d}T${t}+05:00`); }
+    function msToDHMS(ms) {
+      if (!isFinite(ms) || ms < 0) return null;
+      const totalSec = Math.floor(ms / 1000);
+      return { days: Math.floor(totalSec / 86400), hours: Math.floor((totalSec % 86400) / 3600), minutes: Math.floor((totalSec % 3600) / 60) };
+    }
+    function setPill(status) {
+      statusPill.classList.remove('ok', 'warn', 'crit');
+      if (status === 'crit') { statusPill.classList.add('crit'); statusPill.textContent = 'Critical'; }
+      else if (status === 'warn') { statusPill.classList.add('warn'); statusPill.textContent = 'Watch'; }
+      else { statusPill.classList.add('ok'); statusPill.textContent = 'OK'; }
+    }
+    function smoothGoTo(el) { if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); }
+
+    // Modals
+    const backdrop = document.getElementById('modal-backdrop');
+    function openModal(sel) { const m = document.querySelector(sel); if (!m) return; backdrop.setAttribute('aria-hidden','false'); m.setAttribute('aria-hidden','false'); }
+    function closeModal(sel) { const m = document.querySelector(sel); if (!m) return; m.setAttribute('aria-hidden','true'); backdrop.setAttribute('aria-hidden','true'); }
+    backdrop.addEventListener('click', () => {
+      document.querySelectorAll('.modal[aria-hidden="false"]').forEach(m => m.setAttribute('aria-hidden','true'));
+      backdrop.setAttribute('aria-hidden','true');
+    });
+    document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', e => { const sel = e.currentTarget.getAttribute('data-close'); closeModal(sel); }));
+
+    // Left buttons
+    document.getElementById('btn-incoming')?.addEventListener('click', () => openModal('#modal-incoming'));
+    document.getElementById('btn-outgoing')?.addEventListener('click', () => openModal('#modal-outgoing'));
+    document.getElementById('btn-email')?.addEventListener('click', () => openModal('#modal-alerts'));
+    document.getElementById('btn-datetime')?.addEventListener('click', () => smoothGoTo(document.getElementById('currentDateTime')));
+    document.getElementById('btn-trend')?.addEventListener('click', () => openModal('#modal-trend'));
+
+    // Trend range
+    document.querySelectorAll('input[name="range"]').forEach(r => r.addEventListener('change', updateChartRange));
+
+    // Alerts config
+    const alertEmailInput    = document.getElementById('alert-email');
+    const alertThresholdInput= document.getElementById('alert-threshold');
+    const alertMsg           = document.getElementById('alert-msg');
+    const alertsRef          = doc(db, 'settings', 'alerts');
+
+    document.getElementById('alert-save').addEventListener('click', async () => {
+      const email = (alertEmailInput.value || '').trim();
+      const thresholdPct = Math.min(99, Math.max(1, Number(alertThresholdInput.value || 15)));
+      try {
+        await setDoc(alertsRef, { email, thresholdPct }, { merge: true });
+        alertMsg.textContent = 'Saved ✔';
+        thresholdPctGlobal = thresholdPct;
+        recomputeForecast();
+      } catch (e) { alertMsg.textContent = 'Failed to save: ' + (e?.message || e); }
+    });
+
+    let thresholdPctGlobal = 15;
+    onSnapshot(alertsRef, (snap) => {
+      const d = snap.data() || {};
+      if (typeof d.thresholdPct === 'number') {
+        thresholdPctGlobal = Math.min(99, Math.max(1, d.thresholdPct));
+        alertThresholdInput.value = thresholdPctGlobal;
+        thresholdPctEl.textContent = String(thresholdPctGlobal);
+      } else { thresholdPctEl.textContent = '15'; }
+      if (typeof d.email === 'string') alertEmailInput.value = d.email;
+      recomputeForecast();
+    });
+
+    // Data caches
+    let scaledAll = []; let inletEventsAll = []; let outletEventsAll = [];
+    let chartRange = 'last5';
+
+    function updateChartRange() {
+      chartRange = document.querySelector('input[name="range"]:checked')?.value || 'last5';
+      const { labels, data } = getRangeData(chartRange);
+      dieselChart.data.labels = labels;
+      dieselChart.data.datasets[0].data = data;
+      dieselChart.update();
+    }
+    function getRangeData(range) {
+      if (scaledAll.length === 0) return { labels: [], data: [] };
+      if (range === 'last5') {
+        const last5 = scaledAll.slice(-5);
+        return { labels: last5.map(r => r.key), data: last5.map(r => r.liters) };
+      }
+      const end = scaledAll[scaledAll.length - 1].date.getTime();
+      let start = 0;
+      if (range === '24h') start = end - 24*3600*1000;
+      else if (range === '7d') start = end - 7*24*3600*1000;
+      const windowed = scaledAll.filter(p => p.date.getTime() >= start);
+      return { labels: windowed.map(r => r.key), data: windowed.map(r => r.liters) };
+    }
+
+    // Modals tables + CSV
+    function fillEventTable(tbodyEl, events, query) {
+      const q = (query || '').toLowerCase();
+      const rows = events.filter(e => !q || e.stamp.toLowerCase().includes(q)).slice(-500).reverse();
+      tbodyEl.innerHTML = rows.map(e => `<tr><td>${e.delta > 0 ? '+'+e.delta : e.delta} L</td><td>${e.stamp}</td></tr>`).join('');
+    }
+    function exportCSV(filename, events) {
+      const header = 'amount_liters,timestamp\n';
+      const lines = events.slice().map(e => `${e.delta},${e.stamp}`).join('\n');
+      const blob = new Blob([header + lines], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    const incomingSearch = document.getElementById('incoming-search');
+    const outgoingSearch = document.getElementById('outgoing-search');
+    document.getElementById('incoming-export').addEventListener('click', () => exportCSV('inlet_events.csv', inletEventsAll));
+    document.getElementById('outgoing-export').addEventListener('click', () => exportCSV('outlet_events.csv', outletEventsAll));
+    incomingSearch.addEventListener('input', () => fillEventTable(document.getElementById('incoming-tbody'), inletEventsAll, incomingSearch.value));
+    outgoingSearch.addEventListener('input', () => fillEventTable(document.getElementById('outgoing-tbody'), outletEventsAll, outgoingSearch.value));
+
+    // Firestore listener
+    onSnapshot(collection(db, 'potvalue'), (qSnap) => {
+      const readings = [];
+      qSnap.forEach((dayDoc) => {
+        const dateId = dayDoc.id; const data = dayDoc.data() || {};
+        Object.entries(data).forEach(([timeStr, potRaw]) => {
+          const parts = String(timeStr).split(':').map(s => s.padStart(2, '0'));
+          const normTime = `${parts[0] || '00'}:${parts[1] || '00'}:${parts[2] || '00'}`;
+          const key = `${dateId} ${normTime}`;
+          const potValue = Number(potRaw);
+          if (!Number.isNaN(potValue)) readings.push({ key, potValue });
+        });
+      });
+      if (readings.length === 0) return;
+
+      readings.sort((a, b) => a.key.localeCompare(b.key));
+
+      scaledAll = readings.map(r => {
+        const litersRaw = dipToLiters(r.potValue);
+        const liters = Math.min(Math.round(litersRaw), maxCapacity);
+        return { ...r, liters, date: parsePKTToDate(r.key) };
+      });
+
+      const latest = scaledAll[scaledAll.length - 1];
+      currentLevelSpan.textContent = latest.liters;
+      fluidDiv.style.height = `${(latest.liters / maxCapacity) * 100}%`;
+
+      updateChartRange();
+
+      inletEventsAll = []; outletEventsAll = [];
+      for (let i = 1; i < scaledAll.length; i++) {
+        const change = scaledAll[i].liters - scaledAll[i - 1].liters;
+        const stamp = scaledAll[i].key;
+        if (change > 0) inletEventsAll.push({ delta: change, stamp });
+        else if (change < 0) outletEventsAll.push({ delta: change, stamp });
+      }
+
+      inletLogList.innerHTML =
+        inletEventsAll.length >= 5
+          ? inletEventsAll.slice(-5).reverse().map(e => `<div class="transaction"><span class="inlet">+${e.delta} L</span> <span>${e.stamp}</span></div>`).join('')
+          : '';
+
+      outletLogList.innerHTML =
+        outletEventsAll.length >= 5
+          ? outletEventsAll.slice(-5).reverse().map(e => `<div class="transaction"><span class="outlet">${e.delta} L</span> <span>${e.stamp}</span></div>`).join('')
+          : '';
+
+      fillEventTable(document.getElementById('incoming-tbody'), inletEventsAll, incomingSearch.value);
+      fillEventTable(document.getElementById('outgoing-tbody'), outletEventsAll, outgoingSearch.value);
+
+      recomputeForecast();
+
+      const latestDip = readings[readings.length - 1].potValue;
+      const inputEl = document.getElementById('potInput');
+      if (inputEl && !document.activeElement.isSameNode(inputEl)) inputEl.value = String(latestDip);
+    }, (err) => console.error('Snapshot error on potvalue collection:', err));
+
+    function recomputeForecast() {
+      if (scaledAll.length < 2) return;
+      const latest = scaledAll[scaledAll.length - 1];
+      const thresholdLiters = Math.round(maxCapacity * (thresholdPctGlobal / 100));
+      thresholdEl.textContent = String(thresholdLiters);
+      thresholdPctEl.textContent = String(thresholdPctGlobal);
+
+      const twelveHoursMs = 12 * 60 * 60 * 1000;
+      const tEnd = latest.date.getTime();
+      const windowed = scaledAll.filter(p => (tEnd - p.date.getTime()) <= twelveHoursMs);
+      if (windowed.length < 3) { avgRateEl.textContent = '—'; etaEl.textContent = '—'; setPill('ok'); return; }
+      const t0 = windowed[0].date.getTime();
+      const xs = windowed.map(p => (p.date.getTime() - t0) / 3600000);
+      const ys = windowed.map(p => p.liters);
+      const n = xs.length;
+      const sumx = xs.reduce((a,b)=>a+b,0), sumy = ys.reduce((a,b)=>a+b,0);
+      const sumxy = xs.reduce((a,xi,i)=>a+xi*ys[i],0), sumxx = xs.reduce((a,xi)=>a+xi*xi,0);
+      const denom = (n * sumxx - sumx * sumx);
+      let slopeLph = 0; if (Math.abs(denom) > 1e-9) slopeLph = (n * sumxy - sumx * sumy) / denom;
+      avgRateEl.textContent = Math.abs(slopeLph).toFixed(1);
+
+      if (slopeLph < -0.01 && latest.liters > thresholdLiters) {
+        const hoursToThresh = (latest.liters - thresholdLiters) / (-slopeLph);
+        const ms = hoursToThresh * 3600000;
+        const dhm = msToDHMS(ms);
+        if (dhm) {
+          etaEl.textContent = `${dhm.days}d ${dhm.hours}h ${dhm.minutes}m`;
+          if (hoursToThresh <= 6) setPill('crit');
+          else if (hoursToThresh <= 24) setPill('warn');
+          else setPill('ok');
+        } else { etaEl.textContent = '—'; setPill('ok'); }
+      } else {
+        etaEl.textContent = '—';
+        if (latest.liters <= thresholdLiters) setPill('crit'); else setPill('ok');
+      }
+    }
+
+    /* ===========================
+       Manual write section (NO REFRESH)
+       =========================== */
+    const potForm  = document.getElementById('potForm');
+    const potInput = document.getElementById('potInput');
+    const saveBtn  = document.getElementById('saveBtn');
+    const potMsg   = document.getElementById('potMsg');
+
+    function showMsg(text, type = "hint") {
+      potMsg.textContent = text; potMsg.className = type;
+    }
+    function getTodayDocAndTime() {
+      const now = new Date();
+      const { date, time } = getPakistanDateTime(now);
+      return { docRef: doc(db, 'potvalue', date), fieldName: time };
+    }
+
+    // Enter key behaves like clicking Save
+    potInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); saveBtn.click(); }
+    });
+
+    potForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const raw = potInput.value.trim();
+      const value = Number(raw);
+
+      if (!Number.isFinite(value) || value < 0 || value > 2 * R_mm) {
+        showMsg(`Enter a dip between 0 and ${2 * R_mm} mm.`, "err");
+        return false;
+      }
+
+      const { docRef, fieldName } = getTodayDocAndTime();
+      saveBtn.disabled = true;
+      showMsg("Saving…");
+
+      try {
+        await setDoc(docRef, { [fieldName]: value }, { merge: true });
+        const litersPreview = dipToLiters(value);
+        showMsg(`Saved! (≈ ${Math.round(litersPreview)} L)`, "ok");
+      } catch (err) {
+        console.error(err);
+        showMsg("Failed to save: " + (err?.message || err), "err");
+      } finally {
+        saveBtn.disabled = false;
+      }
+
+      return false; // guard
+    });
+  </script>
+</body>
+</html>
